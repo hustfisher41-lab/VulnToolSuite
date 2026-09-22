@@ -14,6 +14,7 @@ from .collection import collect_batch, collection_status, fetch_record, sync_cve
 from .closure import run_simple_closure
 from .collectors import read_file
 from .demo import demo_sources
+from .docker_trajectories import generate_docker_trajectories
 from .embedding import (
     DomainAdapterEncoder, HashEncoder, LocalSentenceEncoder, classify_text, cluster_records,
     fit_domain_adapter, generate_training_pairs, index_records, read_training_pairs,
@@ -247,6 +248,15 @@ def parser() -> argparse.ArgumentParser:
     trajectory_export = commands.add_parser(
         "trajectory-export", help="Export trajectories plus observable-action SFT JSONL")
     trajectory_export.add_argument("--output", default="output/security-trajectories")
+    trajectory_docker = commands.add_parser(
+        "trajectory-docker-generate",
+        help="Execute harmless canaries in a restricted local Docker container and persist structured trajectories",
+    )
+    trajectory_docker.add_argument("--output", default="output/docker-trajectories")
+    trajectory_docker.add_argument("--count", type=int, default=1500)
+    trajectory_docker.add_argument("--seed", default="vulntools-docker-lab-v1")
+    trajectory_docker.add_argument("--image", default="python:3.12", help="Existing local image; automatic pulls are disabled")
+    trajectory_docker.add_argument("--timeout", type=int, default=300)
     commands.add_parser("trajectory-status", help="Show real/simulated trajectory and runtime-event counts")
     closure = commands.add_parser(
         "simple-closure", help="Run the usable local data/search/dataset/fixture-trajectory acceptance loop")
@@ -488,6 +498,15 @@ def main(argv: list[str] | None = None) -> int:
                     report = import_trajectories(store, args.input)
                 elif args.command == "trajectory-export":
                     report = export_trajectories(store, args.output)
+                elif args.command == "trajectory-docker-generate":
+                    report = generate_docker_trajectories(
+                        store,
+                        args.output,
+                        count=args.count,
+                        seed=args.seed,
+                        image=args.image,
+                        timeout=args.timeout,
+                    )
                 elif args.command == "trajectory-status":
                     report = store.trajectory_summary()
                 elif args.command == "simple-closure":

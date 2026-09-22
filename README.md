@@ -59,7 +59,11 @@ python -m vulntools --db output/vulnerability-master.sqlite trajectory-smoke --o
 python -m vulntools --db output/vulnerability-master.sqlite trajectory-status
 python -m vulntools --db output/vulnerability-master.sqlite trajectory-export --output output/security-trajectories
 python -m vulntools --db output/vulnerability-master.sqlite trajectory-import --input authorized-trajectories.jsonl
+python -m vulntools --db output/vulnerability-master.sqlite trajectory-docker-generate `
+  --count 1500 --output output/docker-trajectories --image python:3.12
 ```
+
+Docker 命令只使用本地已有镜像且禁止自动拉取，以禁网、只读根文件系统、丢弃 capabilities、禁止提权和资源限制运行内置无害 canary。它生成 10 类合成授权场景的可观察轨迹，不执行任意 PoC、不接触公网目标，也不等同于独立 VM 的生产隔离验收。详细边界见 [Docker 轨迹说明](docs/docker-trajectories.md)，本机 1,500 条批次证据见 [Docker 轨迹运行报告](docs/docker-trajectory-run-2026-09-22.md)。
 
 轨迹只保存可观察的 observation/action/tool/input/result、阻碍、恢复策略和证据，不接收或导出模型内部思维过程；导入数据必须显式声明 `environment.authorized=true`。
 

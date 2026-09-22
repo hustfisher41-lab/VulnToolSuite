@@ -229,7 +229,7 @@ DASHBOARD_HTML = r"""<!doctype html>
       text('m-poc', fmt.format(db.poc_artifacts)); text('m-poc-note', `${fmt.format(db.poc_linked_records)} 个有效漏洞有关联`);
       const counts = data.dataset.counts || {}; text('m-sft', fmt.format((counts.sft_classification||0)+(counts.sft_poc_association||0)));
       text('m-trajectories', fmt.format(trajectories.total));
-      text('m-trajectory-note', `${fmt.format(trajectories.real_executions)} 真实 · ${fmt.format(trajectories.simulated)} fixture`);
+      text('m-trajectory-note', `${fmt.format(trajectories.docker_lab_executions || 0)} Docker canary · ${fmt.format(trajectories.attested_vm_executions || 0)} 已验收 VM · ${fmt.format(trajectories.simulated)} fixture`);
       bars('sources', db.sources, Object.values(db.sources).reduce((a,b)=>a+b,0));
       bars('severity-chart', db.severity, db.active);
       bars('missing-chart', db.missing_fields, db.active, true);
@@ -240,7 +240,7 @@ DASHBOARD_HTML = r"""<!doctype html>
       fact(facts, '训练数据', data.dataset.status === 'available' ? `结构校验：${data.dataset.validation.status || 'unknown'}；正式偏好数据 ${fmt.format(counts.preference||0)} 条。` : '训练数据清单未连接。', data.dataset.status === 'available' ? '' : 'warn');
       const trajectoryFacts = document.getElementById('trajectory-facts'); trajectoryFacts.replaceChildren();
       fact(trajectoryFacts, '轨迹持久化', trajectories.total ? `${fmt.format(trajectories.total)} 个任务、${fmt.format(trajectories.steps)} 个步骤、${fmt.format(trajectories.runtime_events)} 个运行事件。` : '尚无轨迹；运行 trajectory-smoke 可生成显式标注的 fixture 闭环。', trajectories.total ? '' : 'warn');
-      fact(trajectoryFacts, '真实执行', trajectories.real_executions ? `${fmt.format(trajectories.real_executions)} 个任务来自已验收执行后端。` : '0 个；fixture 不能作为隔离或真实漏洞证明。', trajectories.real_executions ? '' : 'bad');
+      fact(trajectoryFacts, '执行边界', `${fmt.format(trajectories.docker_lab_executions || 0)} 个 Docker 合成 canary；${fmt.format(trajectories.attested_vm_executions || 0)} 个已验收 VM 任务。Docker canary 不作为真实漏洞或生产隔离证明。`, trajectories.attested_vm_executions ? '' : 'warn');
       fact(trajectoryFacts, '异常事件', `${fmt.format(trajectories.abnormal_events)} 个 timeout / OOM / policy violation / monitor lost 事件。`, trajectories.abnormal_events ? 'warn' : '');
       fact(trajectoryFacts, '训练导出', '轨迹可导出为 JSONL 与 observable-action SFT；不会保存模型内部思维过程。');
     }

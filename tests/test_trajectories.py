@@ -32,10 +32,12 @@ def test_fixture_workflow_persists_with_honest_execution_boundary(tmp_path):
         summary = store.trajectory_summary()
         assert summary["total"] == summary["succeeded"] == summary["simulated"] == 1
         assert summary["real_executions"] == 0
+        assert summary["docker_lab_executions"] == summary["attested_vm_executions"] == 0
         assert store.trajectory(trajectory["task_id"])["outcome_scope"] == "workflow_canary_only"
         exported = export_trajectories(store, tmp_path / "dataset")
     assert exported["counts"] == {"trajectories": 1, "sft": 1}
     assert exported["contains_internal_reasoning"] is False
+    assert exported["docker_lab_executions"] == exported["attested_vm_executions"] == 0
     sft = json.loads((tmp_path / "dataset" / "trajectory_sft.jsonl").read_text(encoding="utf-8"))
     assert sft["metadata"]["task_id"] == trajectory["task_id"]
 

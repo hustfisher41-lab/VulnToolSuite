@@ -272,10 +272,17 @@ class Store:
         categories = {str(item[0]): int(item[1]) for item in self.db.execute(
             "SELECT category,count(*) FROM security_trajectories GROUP BY category ORDER BY category"
         )}
+        docker_lab = int(self.db.execute(
+            "SELECT count(*) FROM security_trajectories WHERE environment_kind='docker_canary_lab'"
+        ).fetchone()[0])
+        attested_vm = int(self.db.execute(
+            "SELECT count(*) FROM security_trajectories WHERE environment_kind='attested_vm'"
+        ).fetchone()[0])
         return {"total": total, "succeeded": int(row[1] or 0), "failed": int(row[2] or 0),
                 "blocked": int(row[3] or 0), "simulated": int(row[4] or 0),
                 "real_executions": int(row[5] or 0), "steps": steps, "runtime_events": events,
                 "abnormal_events": abnormal, "average_steps": (steps / total if total else 0.0),
+                "docker_lab_executions": docker_lab, "attested_vm_executions": attested_vm,
                 "categories": categories}
 
     def start_job(self, kind: str) -> int:

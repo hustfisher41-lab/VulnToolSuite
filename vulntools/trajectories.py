@@ -196,6 +196,12 @@ def export_trajectories(store: Store, output: str | Path) -> dict[str, Any]:
                 "counts": {"trajectories": len(trajectories), "sft": len(sft_rows)},
                 "files": {"trajectories": trajectory_path.name, "sft": sft_path.name},
                 "contains_internal_reasoning": False,
-                "real_executions": sum(not item["is_simulated"] for item in trajectories)}
+                "real_executions": sum(not item["is_simulated"] for item in trajectories),
+                "docker_lab_executions": sum(
+                    item.get("environment", {}).get("kind") == "docker_canary_lab" for item in trajectories
+                ),
+                "attested_vm_executions": sum(
+                    item.get("environment", {}).get("kind") == "attested_vm" for item in trajectories
+                )}
     (directory / "manifest.json").write_text(canonical_json(manifest) + "\n", encoding="utf-8")
     return {**manifest, "output": str(directory)}
