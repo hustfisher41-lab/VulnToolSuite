@@ -255,7 +255,7 @@ def parser() -> argparse.ArgumentParser:
         help="Execute harmless canaries in a restricted local Docker container and persist structured trajectories",
     )
     trajectory_docker.add_argument("--output", default="output/docker-trajectories")
-    trajectory_docker.add_argument("--count", type=int, default=1500)
+    trajectory_docker.add_argument("--count", type=int, default=3000)
     trajectory_docker.add_argument("--seed", default="vulntools-docker-lab-v1")
     trajectory_docker.add_argument("--image", default="python:3.12", help="Existing local image; automatic pulls are disabled")
     trajectory_docker.add_argument("--timeout", type=int, default=300)

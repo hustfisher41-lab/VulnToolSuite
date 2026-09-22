@@ -10,11 +10,16 @@ def test_docker_scenarios_are_balanced_unique_and_deterministic():
     assert first == second
     assert len({item["scenario_id"] for item in first}) == 1500
     counts = {}
+    method_obstacles = {}
     for item in first:
         counts[item["vulnerability_type"]] = counts.get(item["vulnerability_type"], 0) + 1
+        key = (item["vulnerability_type"], item["obstacle"])
+        method_obstacles[key] = method_obstacles.get(key, 0) + 1
         assert item["authorized"] is True
         assert item["target_scope"] == "in-container synthetic canary only"
     assert set(counts.values()) == {150}
+    assert len(method_obstacles) == 50
+    assert set(method_obstacles.values()) == {30}
 
 
 def test_docker_result_becomes_evidence_bound_non_simulated_canary(tmp_path):
@@ -31,7 +36,10 @@ def test_docker_result_becomes_evidence_bound_non_simulated_canary(tmp_path):
         "variant": scenario["variant"],
         "obstacle": scenario["obstacle"],
         "blocked_initial": False,
-        "recovered": False,
+        "recovered": True,
+        "obstacle_observation": {"precondition_ready": True},
+        "recovery_action": "No recovery was required; continue with the authorized lab check.",
+        "recovery_verified": True,
         "success": True,
         "observation": "The harmless canary produced the expected observable result.",
         "proof": {"canary_seen": True},
@@ -66,5 +74,11 @@ def test_docker_result_becomes_evidence_bound_non_simulated_canary(tmp_path):
     assert trajectory["synthetic_scenario"] is True
     assert trajectory["real_vulnerability_verified"] is False
     assert trajectory["contains_internal_reasoning"] is False
+    assert trajectory["chain_complete"] is True
+    assert trajectory["structured_pentest_chain"]["phase_count"] == 7
+    assert [item["action_type"] for item in trajectory["steps"]] == [
+        "define_scope", "form_hypothesis", "assess_obstacle", "recover_or_proceed",
+        "execute_canary", "verify_evidence", "complete_task",
+    ]
     assert trajectory["environment"]["production_isolation_attested"] is False
     assert trajectory["outcome_scope"] == "docker_lab_canary_only"

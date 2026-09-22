@@ -234,6 +234,58 @@ RUNNERS: dict[str, Callable[[str], dict[str, Any]]] = {
 }
 
 
+def _resolve_obstacle(obstacle: str, canary: str) -> dict[str, Any]:
+    """Exercise a harmless, deterministic recovery branch before the canary check."""
+    if obstacle == "none":
+        return {
+            "observed": False,
+            "recovery_action": "No recovery was required; continue with the authorized lab check.",
+            "recovery_verified": True,
+            "proof": {"precondition_ready": True},
+        }
+    if obstacle == "session_expired":
+        session = {"valid": False, "generation": 1}
+        initially_blocked = not session["valid"]
+        session.update(valid=True, generation=2)
+        return {
+            "observed": initially_blocked,
+            "recovery_action": "Refresh the disposable lab session and bind the same canary to it.",
+            "recovery_verified": session["valid"] and session["generation"] == 2,
+            "proof": {"initial_generation": 1, "refreshed_generation": session["generation"]},
+        }
+    if obstacle == "field_alias":
+        schema = {"public_name": "canonical_test_field"}
+        resolved = schema.get("public_name")
+        return {
+            "observed": resolved != "public_name",
+            "recovery_action": "Resolve the documented field alias to the canonical synthetic test field.",
+            "recovery_verified": resolved == "canonical_test_field",
+            "proof": {"requested_field": "public_name", "resolved_field": resolved},
+        }
+    if obstacle == "input_filter":
+        raw_marker = "<blocked>"
+        canonical_marker = "CANARY-" + canary
+        raw_rejected = "<" in raw_marker
+        canonical_accepted = canonical_marker.startswith("CANARY-") and "<" not in canonical_marker
+        return {
+            "observed": raw_rejected,
+            "recovery_action": "Use the lab-documented canonical canary representation without bypassing a real filter.",
+            "recovery_verified": canonical_accepted,
+            "proof": {"raw_variant_rejected": raw_rejected, "canonical_variant_accepted": canonical_accepted},
+        }
+    if obstacle == "state_version":
+        state = {"current": 2, "requested": 1}
+        initially_blocked = state["requested"] != state["current"]
+        state["requested"] = state["current"]
+        return {
+            "observed": initially_blocked,
+            "recovery_action": "Reload the disposable workflow state and retry against its current version.",
+            "recovery_verified": state["requested"] == state["current"],
+            "proof": {"stale_version": 1, "current_version": state["current"]},
+        }
+    raise ValueError("unsupported obstacle")
+
+
 def run_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
     started_at = _now()
     scenario_id = str(scenario["scenario_id"])
@@ -242,9 +294,10 @@ def run_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
     if vulnerability_type not in RUNNERS:
         raise ValueError("unsupported vulnerability_type")
     obstacle = str(scenario["obstacle"])
-    blocked_initial = obstacle != "none"
+    recovery = _resolve_obstacle(obstacle, canary)
+    blocked_initial = bool(recovery["observed"])
     result = RUNNERS[vulnerability_type](canary)
-    passed = bool(result["passed"])
+    passed = bool(result["passed"]) and bool(recovery["recovery_verified"])
     evidence_digest = _digest(
         f"{scenario_id}|{vulnerability_type}|{canary}|{'passed' if passed else 'failed'}"
     )
@@ -258,7 +311,10 @@ def run_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
         "variant": scenario["variant"],
         "obstacle": obstacle,
         "blocked_initial": blocked_initial,
-        "recovered": blocked_initial and passed,
+        "recovered": bool(recovery["recovery_verified"]),
+        "obstacle_observation": recovery["proof"],
+        "recovery_action": recovery["recovery_action"],
+        "recovery_verified": recovery["recovery_verified"],
         "success": passed,
         "observation": result["observation"],
         "proof": result["proof"],

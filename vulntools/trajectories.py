@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+from collections import Counter
 from typing import Any
 
 from .models import canonical_json, now
@@ -15,6 +16,31 @@ from .storage import Store
 SCHEMA = "vulntools/security-trajectory/v1"
 ALLOWED_CATEGORIES = {"technical_vulnerability", "business_logic"}
 FORBIDDEN_KEYS = {"chain_of_thought", "reasoning", "thoughts", "internal_monologue"}
+REQUIRED_CHAIN_PHASES = (
+    "define_scope",
+    "form_hypothesis",
+    "assess_obstacle",
+    "recover_or_proceed",
+    "execute_canary",
+    "verify_evidence",
+    "complete_task",
+)
+REQUIRED_OBSTACLES = {"none", "session_expired", "field_alias", "input_filter", "state_version"}
+REQUIREMENT_DATASETS = {
+    "technical_vulnerability": {
+        "requirement_id": "3",
+        "dataset_name_zh": "结构化漏洞渗透思维链数据库",
+        "methods": {"xss", "sql_injection", "command_injection", "ssrf", "csrf"},
+    },
+    "business_logic": {
+        "requirement_id": "4",
+        "dataset_name_zh": "业务逻辑漏洞渗透思维链数据库",
+        "methods": {
+            "parameter_tampering", "mass_assignment", "authorization_replay",
+            "duplicate_submission", "workflow_order_bypass",
+        },
+    },
+}
 
 
 def validate_trajectory(value: dict[str, Any]) -> dict[str, Any]:
@@ -208,11 +234,157 @@ def export_trajectories(store: Store, output: str | Path) -> dict[str, Any]:
     return {**manifest, "output": str(directory)}
 
 
+def _requirement_acceptance(
+    category: str,
+    trajectories: list[dict[str, Any]],
+    *,
+    minimum_required: int = 1000,
+) -> dict[str, Any]:
+    config = REQUIREMENT_DATASETS[category]
+    method_counts = Counter(str(item.get("vulnerability_type")) for item in trajectories)
+    obstacle_counts = Counter(
+        str((item.get("obstacle_condition") or {}).get("code")) for item in trajectories
+    )
+    matrix = Counter(
+        (
+            str(item.get("vulnerability_type")),
+            str((item.get("obstacle_condition") or {}).get("code")),
+        )
+        for item in trajectories
+    )
+    successful = sum(item.get("success") is True for item in trajectories)
+    complete = sum(
+        item.get("chain_complete") is True
+        and (item.get("structured_pentest_chain") or {}).get("complete") is True
+        and (item.get("completion") or {}).get("task_completed") is True
+        and [step.get("action_type") for step in item.get("steps") or []]
+        == list(REQUIRED_CHAIN_PHASES)
+        for item in trajectories
+    )
+    obstacle_process_complete = sum(
+        bool((item.get("obstacle_condition") or {}).get("assessment_zh"))
+        and bool((item.get("obstacle_condition") or {}).get("strategy_zh"))
+        and (item.get("obstacle_condition") or {}).get("recovery_verified") is True
+        for item in trajectories
+    )
+    expected_matrix = {
+        f"{method}|{obstacle}": matrix[(method, obstacle)]
+        for method in sorted(config["methods"])
+        for obstacle in sorted(REQUIRED_OBSTACLES)
+    }
+    checks = {
+        "minimum_count_met": len(trajectories) >= minimum_required,
+        "all_tasks_succeeded": successful == len(trajectories),
+        "all_chains_complete": complete == len(trajectories),
+        "all_obstacle_processes_complete": obstacle_process_complete == len(trajectories),
+        "required_methods_present": set(method_counts) == config["methods"],
+        "required_obstacles_present": set(obstacle_counts) == REQUIRED_OBSTACLES,
+        "every_method_obstacle_pair_present": all(expected_matrix.values()),
+        "no_internal_reasoning": all(
+            item.get("contains_internal_reasoning") is False for item in trajectories
+        ),
+        "synthetic_boundary_preserved": all(
+            item.get("synthetic_scenario") is True
+            and item.get("real_vulnerability_verified") is False
+            for item in trajectories
+        ),
+    }
+    report = {
+        "requirement_id": config["requirement_id"],
+        "dataset_name_zh": config["dataset_name_zh"],
+        "minimum_required": minimum_required,
+        "actual_count": len(trajectories),
+        "successful_count": successful,
+        "complete_chain_count": complete,
+        "obstacle_process_complete_count": obstacle_process_complete,
+        "steps_per_chain": len(REQUIRED_CHAIN_PHASES),
+        "methods": dict(sorted(method_counts.items())),
+        "obstacles": dict(sorted(obstacle_counts.items())),
+        "method_obstacle_matrix": expected_matrix,
+        "checks": checks,
+        "accepted": all(checks.values()),
+    }
+    if not report["accepted"]:
+        failed = [name for name, passed in checks.items() if not passed]
+        raise ValueError(f"Requirement {config['requirement_id']} acceptance failed: {failed}")
+    return report
+
+
+def _write_requirement_tables(
+    store: Store,
+    category: str,
+    trajectories: list[dict[str, Any]],
+    acceptance: dict[str, Any],
+) -> None:
+    store.db.executescript("""
+        CREATE TABLE dataset_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL);
+        CREATE TABLE structured_pentest_chains (
+            task_id TEXT PRIMARY KEY,
+            requirement_id TEXT NOT NULL,
+            category TEXT NOT NULL,
+            attack_method TEXT NOT NULL,
+            attack_method_zh TEXT NOT NULL,
+            obstacle_condition TEXT NOT NULL,
+            success INTEGER NOT NULL CHECK(success=1),
+            chain_complete INTEGER NOT NULL CHECK(chain_complete=1),
+            step_count INTEGER NOT NULL,
+            chain_payload TEXT NOT NULL,
+            FOREIGN KEY(task_id) REFERENCES security_trajectories(task_id) ON DELETE CASCADE);
+        CREATE INDEX structured_pentest_chains_method_obstacle
+            ON structured_pentest_chains(attack_method, obstacle_condition, success);
+    """)
+    metadata = {
+        "schema": "vulntools/structured-pentest-chain-database/v1",
+        "category": category,
+        "requirement_id": acceptance["requirement_id"],
+        "dataset_name_zh": acceptance["dataset_name_zh"],
+        "minimum_required": acceptance["minimum_required"],
+        "actual_count": acceptance["actual_count"],
+        "successful_count": acceptance["successful_count"],
+        "complete_chain_count": acceptance["complete_chain_count"],
+        "methods": acceptance["methods"],
+        "obstacles": acceptance["obstacles"],
+        "acceptance_checks": acceptance["checks"],
+        "contains_internal_reasoning": False,
+        "scope": "authorized synthetic Docker canary only",
+    }
+    with store.db:
+        for key, value in metadata.items():
+            store.db.execute(
+                "INSERT INTO dataset_metadata VALUES (?,?)", (key, canonical_json(value))
+            )
+        for item in trajectories:
+            profile = (item.get("structured_pentest_chain") or {}).get("method_profile") or {}
+            obstacle = item.get("obstacle_condition") or {}
+            chain_payload = {
+                "task_id": item["task_id"],
+                "task_objective_zh": item.get("task_objective_zh"),
+                "success_criteria_zh": item.get("success_criteria_zh"),
+                "obstacle_condition": obstacle,
+                "structured_pentest_chain": item.get("structured_pentest_chain"),
+                "steps": item["steps"],
+                "completion": item.get("completion"),
+                "evidence": item["evidence"],
+            }
+            store.db.execute(
+                """INSERT INTO structured_pentest_chains
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    item["task_id"], acceptance["requirement_id"], category,
+                    item["vulnerability_type"], profile.get("name_zh"), obstacle.get("code"),
+                    1, 1, len(item["steps"]), canonical_json(chain_payload),
+                ),
+            )
+
+
 def export_category_databases(
     store: Store,
     output: str | Path,
     *,
     expected_per_category: int | None = None,
+    minimum_required: int = 1000,
     environment_kind: str = "docker_canary_lab",
     overwrite: bool = False,
 ) -> dict[str, Any]:
@@ -221,6 +393,8 @@ def export_category_databases(
         type(expected_per_category) is not int or expected_per_category < 1
     ):
         raise ValueError("expected_per_category must be a positive integer")
+    if type(minimum_required) is not int or minimum_required < 1:
+        raise ValueError("minimum_required must be a positive integer")
     if not isinstance(environment_kind, str) or not environment_kind.strip():
         raise ValueError("environment_kind must be nonempty")
 
@@ -249,6 +423,10 @@ def export_category_databases(
             f"Expected {expected_per_category} {environment_kind} trajectories per category; got {counts}"
         )
 
+    acceptance_reports = {
+        category: _requirement_acceptance(category, items, minimum_required=minimum_required)
+        for category, items in grouped.items()
+    }
     targets = {category: directory / filename for category, filename in names.items()}
     existing = [str(path) for path in targets.values() if path.exists()]
     if existing and not overwrite:
@@ -263,6 +441,9 @@ def export_category_databases(
             with Store(temporary) as category_store:
                 for trajectory in grouped[category]:
                     category_store.save_trajectory(trajectory)
+                _write_requirement_tables(
+                    category_store, category, grouped[category], acceptance_reports[category]
+                )
                 summary = category_store.trajectory_summary()
                 quick_check = str(category_store.db.execute("PRAGMA quick_check").fetchone()[0])
                 foreign_key_violations = len(category_store.db.execute("PRAGMA foreign_key_check").fetchall())
@@ -302,6 +483,7 @@ def export_category_databases(
             "quick_check": quick_check,
             "foreign_key_violations": foreign_key_violations,
             "summary": summary,
+            "acceptance": acceptance_reports[category],
         }
 
     manifest = {
@@ -311,6 +493,9 @@ def export_category_databases(
         "expected_per_category": expected_per_category,
         "counts": counts,
         "databases": database_reports,
+        "requirements": {
+            report["requirement_id"]: report for report in acceptance_reports.values()
+        },
         "contains_internal_reasoning": False,
         "real_world_vulnerabilities_verified": 0,
         "scope": "Executed Docker canaries in synthetic authorized scenarios only.",

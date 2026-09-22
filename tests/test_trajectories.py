@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 
 import pytest
 
@@ -88,29 +89,73 @@ def test_one_command_simple_closure_is_usable_and_honest(tmp_path):
 
 def test_category_database_export_is_isolated_and_validated(tmp_path):
     database = tmp_path / "source.sqlite"
+    methods = {
+        "technical_vulnerability": (
+            "xss", "sql_injection", "command_injection", "ssrf", "csrf",
+        ),
+        "business_logic": (
+            "parameter_tampering", "mass_assignment", "authorization_replay",
+            "duplicate_submission", "workflow_order_bypass",
+        ),
+    }
+    obstacles = ("none", "session_expired", "field_alias", "input_filter", "state_version")
+    phases = (
+        "define_scope", "form_hypothesis", "assess_obstacle", "recover_or_proceed",
+        "execute_canary", "verify_evidence", "complete_task",
+    )
     with Store(database) as store:
-        for category in ("technical_vulnerability", "business_logic"):
-            trajectory = trajectory_from_smoke(smoke_workflow(tmp_path / category, mode="fixture"))
-            trajectory["task_id"] = f"docker-lab:{category}:0000"
-            trajectory["category"] = category
-            trajectory["environment"]["kind"] = "docker_canary_lab"
-            trajectory["is_simulated"] = False
-            trajectory["execution_ready"] = True
-            store.save_trajectory(validate_trajectory(trajectory))
+        for category, category_methods in methods.items():
+            base = trajectory_from_smoke(smoke_workflow(tmp_path / category, mode="fixture"))
+            for method in category_methods:
+                for obstacle in obstacles:
+                    trajectory = deepcopy(base)
+                    trajectory["task_id"] = f"docker-lab:{method}:{obstacle}"
+                    trajectory["category"] = category
+                    trajectory["vulnerability_type"] = method
+                    trajectory["environment"]["kind"] = "docker_canary_lab"
+                    trajectory["is_simulated"] = False
+                    trajectory["execution_ready"] = True
+                    trajectory["synthetic_scenario"] = True
+                    trajectory["real_vulnerability_verified"] = False
+                    trajectory["contains_internal_reasoning"] = False
+                    trajectory["chain_complete"] = True
+                    trajectory["obstacle_condition"] = {
+                        "code": obstacle,
+                        "assessment_zh": "已识别阻碍",
+                        "strategy_zh": "在原授权范围内恢复",
+                        "recovery_verified": True,
+                    }
+                    trajectory["structured_pentest_chain"] = {
+                        "complete": True,
+                        "method_profile": {"name_zh": method},
+                    }
+                    trajectory["completion"] = {"task_completed": True}
+                    trajectory["steps"] = [
+                        {**deepcopy(base["steps"][0]), "action_type": phase}
+                        for phase in phases
+                    ]
+                    store.save_trajectory(validate_trajectory(trajectory))
         report = export_category_databases(
-            store, tmp_path / "split", expected_per_category=1
+            store, tmp_path / "split", expected_per_category=25, minimum_required=25
         )
         replaced = export_category_databases(
-            store, tmp_path / "split", expected_per_category=1, overwrite=True
+            store, tmp_path / "split", expected_per_category=25,
+            minimum_required=25, overwrite=True,
         )
 
     assert report["counts"] == {
-        "technical_vulnerability": 1,
-        "business_logic": 1,
+        "technical_vulnerability": 25,
+        "business_logic": 25,
     }
     for category, details in report["databases"].items():
         assert details["quick_check"] == "ok"
         assert details["foreign_key_violations"] == 0
         with Store(details["path"]) as split_store:
-            assert split_store.trajectory_summary()["categories"] == {category: 1}
+            assert split_store.trajectory_summary()["categories"] == {category: 25}
+            assert split_store.db.execute(
+                "SELECT count(*) FROM structured_pentest_chains"
+            ).fetchone()[0] == 25
+            assert json.loads(split_store.db.execute(
+                "SELECT value FROM dataset_metadata WHERE key='acceptance_checks'"
+            ).fetchone()[0])["all_tasks_succeeded"] is True
     assert replaced["counts"] == report["counts"]

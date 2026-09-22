@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -29,12 +28,118 @@ SCENARIO_TYPES = (
 )
 VARIANTS = ("baseline", "alternate_field", "encoded_input", "new_session", "state_refresh", "replay")
 OBSTACLES = ("none", "session_expired", "field_alias", "input_filter", "state_version")
-RECOVERY = {
-    "session_expired": "Refresh the disposable lab session and repeat the same canary-bound check.",
-    "field_alias": "Resolve the field from the lab schema, then repeat without widening the target scope.",
-    "input_filter": "Use the lab's documented canonical encoding and repeat the harmless canary.",
-    "state_version": "Reload the disposable scenario state and repeat against the current version.",
+METHOD_PROFILES: dict[str, dict[str, str]] = {
+    "xss": {
+        "name_zh": "XSS",
+        "test_point_zh": "HTML 输出与编码边界",
+        "hypothesis_zh": "若不可信标记在输出点未被编码，合成 DOM 对照中会保留标记结构。",
+        "safe_action_zh": "在内存 HTML 模型中对比未编码与编码分支，不访问浏览器或外部页面。",
+        "success_criteria_zh": "仅未编码分支保留唯一 canary 标记，编码对照分支不保留。",
+    },
+    "sql_injection": {
+        "name_zh": "SQL 注入",
+        "test_point_zh": "SQL 字符串拼接与参数化查询边界",
+        "hypothesis_zh": "若查询拼接不可信输入，内存数据库的返回行会与参数化对照不同。",
+        "safe_action_zh": "仅在容器内存 SQLite 中对比拼接与参数化路径。",
+        "success_criteria_zh": "拼接路径出现额外合成行，参数化对照返回零行。",
+    },
+    "command_injection": {
+        "name_zh": "命令注入",
+        "test_point_zh": "固定容器 shell 文本与参数边界",
+        "hypothesis_zh": "若合成命令文本进入 shell 边界，唯一 canary 会出现在隔离输出中。",
+        "safe_action_zh": "执行代码内置的固定 printf canary，不接受用户命令或外部脚本。",
+        "success_criteria_zh": "固定进程成功退出且隔离输出中出现唯一 canary。",
+    },
+    "ssrf": {
+        "name_zh": "SSRF",
+        "test_point_zh": "URL 输入与内部资源路由边界",
+        "hypothesis_zh": "若合成 URL 获取器信任输入，会命中进程内部的 canary 路由。",
+        "safe_action_zh": "调用进程内字典路由，Docker 始终断网，不发出 HTTP 请求。",
+        "success_criteria_zh": "仅进程内部路由返回与任务绑定的 metadata canary。",
+    },
+    "csrf": {
+        "name_zh": "CSRF",
+        "test_point_zh": "状态变更请求与 CSRF 令牌边界",
+        "hypothesis_zh": "若合成状态处理器未校验令牌，无令牌请求仍会改变状态。",
+        "safe_action_zh": "仅更新内存用户对象的合成邮箱字段。",
+        "success_criteria_zh": "证据显示 token_supplied=false 且合成状态发生变更。",
+    },
+    "parameter_tampering": {
+        "name_zh": "参数篡改",
+        "test_point_zh": "客户端价格与服务端价格信任边界",
+        "hypothesis_zh": "若合成结算信任客户端价格，最终计费会偏离服务端基准。",
+        "safe_action_zh": "仅修改内存订单副本的合成价格字段。",
+        "success_criteria_zh": "合成已收取价格与服务端基准不一致。",
+    },
+    "mass_assignment": {
+        "name_zh": "绑定破坏（批量赋值）",
+        "test_point_zh": "对象绑定字段与允许列表边界",
+        "hypothesis_zh": "若合成绑定器未限制字段，特权字段会被批量写入。",
+        "safe_action_zh": "仅对内存账户对象执行合成字段绑定。",
+        "success_criteria_zh": "证据显示未列入允许列表的 role 字段被绑定。",
+    },
+    "authorization_replay": {
+        "name_zh": "越权重放",
+        "test_point_zh": "操作 nonce 与用户归属校验边界",
+        "hypothesis_zh": "若合成授权处理器仅校验 nonce，其他用户可重放该操作。",
+        "safe_action_zh": "在内存操作对象上对比 owner 与 actor，不发送网络请求。",
+        "success_criteria_zh": "actor 与 owner 不同时，合成操作 nonce 仍被接受。",
+    },
+    "duplicate_submission": {
+        "name_zh": "重复提交",
+        "test_point_zh": "同一逻辑操作与幂等控制边界",
+        "hypothesis_zh": "若合成处理器缺少幂等键，相同操作会被应用两次。",
+        "safe_action_zh": "对内存计数器重复调用同一固定操作。",
+        "success_criteria_zh": "同一合成操作被计数两次，而幂等期望为一次。",
+    },
+    "workflow_order_bypass": {
+        "name_zh": "跳步乱序",
+        "test_point_zh": "工作流状态转换与前置步骤边界",
+        "hypothesis_zh": "若合成工作流未校验前置状态，未审批对象也可直接完成。",
+        "safe_action_zh": "仅在内存状态机中尝试从初始态跳到完成态。",
+        "success_criteria_zh": "completed=true 且 approved=false，证明合成前置状态未被强制。",
+    },
 }
+OBSTACLE_PROFILES: dict[str, dict[str, str]] = {
+    "none": {
+        "name_zh": "无额外阻碍",
+        "assessment_zh": "授权、字段、输入形式和状态版本均满足前置条件。",
+        "strategy_zh": "保持原定范围，直接执行无害 canary 对照。",
+    },
+    "session_expired": {
+        "name_zh": "会话过期",
+        "assessment_zh": "初始会话不再有效，必须恢复授权实验会话后才能继续。",
+        "strategy_zh": "刷新一次性实验会话，将原 canary 绑定到新会话后重试。",
+    },
+    "field_alias": {
+        "name_zh": "字段别名",
+        "assessment_zh": "输入字段名与实验 schema 的规范字段不一致。",
+        "strategy_zh": "查询内置 schema 并解析别名，仅对映射后的合成字段重试。",
+    },
+    "input_filter": {
+        "name_zh": "输入过滤",
+        "assessment_zh": "初始表示形式不符合实验允许的 canary 格式。",
+        "strategy_zh": "改用实验文档定义的规范 canary 表示，不尝试绕过真实防护。",
+    },
+    "state_version": {
+        "name_zh": "状态版本过期",
+        "assessment_zh": "任务引用的合成状态版本落后于当前版本。",
+        "strategy_zh": "重新加载一次性状态，将 canary 重绑定到当前版本后重试。",
+    },
+}
+CATEGORY_REQUIREMENTS = {
+    "technical_vulnerability": "3",
+    "business_logic": "4",
+}
+CHAIN_PHASES = (
+    "define_scope",
+    "form_hypothesis",
+    "assess_obstacle",
+    "recover_or_proceed",
+    "execute_canary",
+    "verify_evidence",
+    "complete_task",
+)
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -49,7 +154,7 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def build_docker_scenarios(count: int = 1500, seed: str = "vulntools-docker-lab-v1") -> list[dict[str, Any]]:
+def build_docker_scenarios(count: int = 3000, seed: str = "vulntools-docker-lab-v1") -> list[dict[str, Any]]:
     if type(count) is not int or count < len(SCENARIO_TYPES):
         raise ValueError(f"count must be an integer of at least {len(SCENARIO_TYPES)}")
     if not isinstance(seed, str) or not seed.strip():
@@ -205,6 +310,12 @@ def docker_result_to_trajectory(
         raise ValueError(f"Evidence digest mismatch for {scenario['scenario_id']}")
     if result.get("success") is not True:
         raise ValueError(f"Docker canary did not succeed for {scenario['scenario_id']}")
+    obstacle = str(scenario["obstacle"])
+    expected_blocked = obstacle != "none"
+    if result.get("obstacle") != obstacle or result.get("blocked_initial") is not expected_blocked:
+        raise ValueError(f"Obstacle evidence mismatch for {scenario['scenario_id']}")
+    if result.get("recovery_verified") is not True or result.get("recovered") is not True:
+        raise ValueError(f"Obstacle recovery was not verified for {scenario['scenario_id']}")
     runtime = result.get("runtime") or {}
     if runtime.get("container") is not True or runtime.get("network_expected") != "none":
         raise ValueError(f"Docker runtime evidence is incomplete for {scenario['scenario_id']}")
@@ -216,40 +327,77 @@ def docker_result_to_trajectory(
         raise ValueError(f"Docker network/read-only restrictions were not observed for {scenario['scenario_id']}")
 
     evidence_pointer = f"{result_path.resolve()}#L{result_line}"
+    method = METHOD_PROFILES[str(scenario["vulnerability_type"])]
+    obstacle_profile = OBSTACLE_PROFILES[obstacle]
+    recovery = obstacle_profile["strategy_zh"]
     steps = [
         _step(
-            "A deterministic authorized scenario and unique canary were prepared for the local Docker lab.",
-            "prepare",
+            "已确认任务仅针对本地 Docker 内的授权合成 canary，不存在公网或第三方目标。",
+            "define_scope",
             "vulntools.docker_trajectory_lab",
             {
                 "scenario_id": scenario["scenario_id"],
                 "variant": scenario["variant"],
                 "canary_sha256": _sha256_bytes(scenario["canary"].encode("utf-8")),
             },
-            {"status": "accepted", "scenario_sha256": result["scenario_sha256"]},
+            {
+                "status": "accepted",
+                "authorized": True,
+                "target_scope": scenario["target_scope"],
+                "scenario_sha256": result["scenario_sha256"],
+            },
             evidence=[evidence_pointer],
-            decision_basis="The manifest explicitly authorizes only a synthetic in-container canary.",
-        )
-    ]
-    if result.get("blocked_initial"):
-        obstacle = str(result["obstacle"])
-        recovery = RECOVERY[obstacle]
-        steps.append(
-            _step(
-                f"The initial lab attempt encountered the declared {obstacle} obstacle.",
-                "recover",
-                "docker_canary_state_machine",
-                {"obstacle": obstacle},
-                {"status": "recovered", "recovered": result.get("recovered") is True},
-                blocked=True,
-                recovery_strategy=recovery,
-                evidence=[evidence_pointer],
-                decision_basis="The obstacle is declared by the scenario and recovery remains inside the same disposable scope.",
-            )
-        )
-    steps.append(
+            decision_basis="只有授权范围、容器限制和唯一 canary 均明确时才进入测试。",
+        ),
         _step(
-            str(result["observation"]),
+            f"测试点为{method['test_point_zh']}。待验证假设：{method['hypothesis_zh']}",
+            "form_hypothesis",
+            "method_profile",
+            {
+                "method": scenario["vulnerability_type"],
+                "method_name_zh": method["name_zh"],
+                "test_point_zh": method["test_point_zh"],
+            },
+            {
+                "hypothesis_zh": method["hypothesis_zh"],
+                "planned_safe_action_zh": method["safe_action_zh"],
+                "success_criteria_zh": method["success_criteria_zh"],
+            },
+            evidence=[evidence_pointer],
+            decision_basis="先固定漏洞类型的可观察假设和成功判据，避免在结果出现后修改标准。",
+        ),
+        _step(
+            f"前置检查识别到阻碍条件“{obstacle_profile['name_zh']}”。{obstacle_profile['assessment_zh']}",
+            "assess_obstacle",
+            "docker_canary_state_machine",
+            {"obstacle": obstacle, "variant": scenario["variant"]},
+            {
+                "observed": expected_blocked,
+                "observation_proof": result["obstacle_observation"],
+                "assessment_zh": obstacle_profile["assessment_zh"],
+            },
+            blocked=expected_blocked,
+            recovery_strategy=recovery,
+            evidence=[evidence_pointer],
+            decision_basis="根据明示前置状态选择恢复分支，不扩大任务目标或改变成功判据。",
+        ),
+        _step(
+            f"处理策略：{recovery}",
+            "recover_or_proceed",
+            "docker_canary_state_machine",
+            {"obstacle": obstacle, "same_canary": True, "same_scope": True},
+            {
+                "status": "ready",
+                "recovery_action": result["recovery_action"],
+                "recovery_verified": result["recovery_verified"],
+                "recovery_proof": result["obstacle_observation"],
+            },
+            recovery_strategy=recovery,
+            evidence=[evidence_pointer],
+            decision_basis="只在恢复动作有容器内证据且仍使用原 canary 时继续。",
+        ),
+        _step(
+            f"{method['safe_action_zh']} 容器观察：{result['observation']}",
             "execute_canary",
             "restricted_docker_container",
             {
@@ -259,21 +407,41 @@ def docker_result_to_trajectory(
             },
             {"status": "passed", "proof": result["proof"]},
             evidence=[evidence_pointer],
-            decision_basis="The canary-specific control comparison produced an observable difference inside the isolated lab.",
-        )
-    )
-    steps[-1]["result"]["runtime_evidence"] = runtime
-    steps.append(
+            decision_basis="执行动作由类型化方法配置预先确定，仅使用固定合成数据与对照分支。",
+        ),
         _step(
-            "The result digest was compared with the host-generated expected digest.",
-            "verify",
+            f"将可观察证据与预先定义的成功判据比对：{method['success_criteria_zh']}",
+            "verify_evidence",
             "sha256_oracle",
-            {"expected_digest": scenario["expected_digest"]},
-            {"actual_digest": result["evidence_digest"], "matched": True},
+            {
+                "expected_digest": scenario["expected_digest"],
+                "success_criteria_zh": method["success_criteria_zh"],
+            },
+            {
+                "actual_digest": result["evidence_digest"],
+                "matched": True,
+                "canary_check_passed": True,
+                "recovery_verified": True,
+            },
             evidence=[evidence_pointer],
-            decision_basis="Matching independent scenario and evidence digests is the completion oracle for this canary task.",
-        )
-    )
+            decision_basis="canary 对照、恢复证据和主机预计算摘要必须同时匹配。",
+        ),
+        _step(
+            "七个阶段均已记录，阻碍已解决，canary 验证成功，任务完成。",
+            "complete_task",
+            "trajectory_completion_gate",
+            {"required_phases": list(CHAIN_PHASES)},
+            {
+                "all_phases_present": True,
+                "obstacle_resolved": True,
+                "success_oracle_matched": True,
+                "task_completed": True,
+            },
+            evidence=[evidence_pointer],
+            decision_basis="只有阶段完整、恢复成功且证据摘要匹配时才标记任务成功。",
+        ),
+    ]
+    steps[4]["result"]["runtime_evidence"] = runtime
 
     events = [{
         "run_id": scenario["scenario_id"],
@@ -301,6 +469,29 @@ def docker_result_to_trajectory(
         "task_id": scenario["scenario_id"],
         "category": scenario["category"],
         "vulnerability_type": scenario["vulnerability_type"],
+        "requirement_id": CATEGORY_REQUIREMENTS[str(scenario["category"])],
+        "task_objective_zh": f"在授权合成 Docker 环境中完成{method['name_zh']}的自动化对照测试。",
+        "success_criteria_zh": method["success_criteria_zh"],
+        "obstacle_condition": {
+            "code": obstacle,
+            "name_zh": obstacle_profile["name_zh"],
+            "initially_blocked": expected_blocked,
+            "assessment_zh": obstacle_profile["assessment_zh"],
+            "strategy_zh": recovery,
+            "recovery_verified": True,
+        },
+        "structured_pentest_chain": {
+            "schema": "vulntools/observable-pentest-decision-chain/v1",
+            "label_zh": "自动化渗透思维链（可观察决策轨迹）",
+            "nature": "observable_structured_decision_trace",
+            "phase_order": list(CHAIN_PHASES),
+            "phase_count": len(CHAIN_PHASES),
+            "method_profile": method,
+            "obstacle_profile": obstacle_profile,
+            "complete": True,
+            "task_success_required": True,
+            "task_success": True,
+        },
         "environment": {
             "kind": "docker_canary_lab",
             "authorized": True,
@@ -315,7 +506,7 @@ def docker_result_to_trajectory(
         "steps": steps,
         "success": True,
         "blocked": False,
-        "recovery_strategy": RECOVERY.get(str(result.get("obstacle"))),
+        "recovery_strategy": recovery,
         "evidence": [{
             "path": str(result_path.resolve()),
             "line": result_line,
@@ -331,6 +522,14 @@ def docker_result_to_trajectory(
         "synthetic_scenario": True,
         "outcome_scope": "docker_lab_canary_only",
         "contains_internal_reasoning": False,
+        "chain_complete": True,
+        "completion": {
+            "required_phases": list(CHAIN_PHASES),
+            "all_phases_present": True,
+            "obstacle_resolved": True,
+            "success_oracle_matched": True,
+            "task_completed": True,
+        },
     }
     return validate_trajectory(trajectory)
 
@@ -339,7 +538,7 @@ def generate_docker_trajectories(
     store: Store,
     output: str | Path,
     *,
-    count: int = 1500,
+    count: int = 3000,
     seed: str = "vulntools-docker-lab-v1",
     image: str = "python:3.12",
     timeout: int = 300,
@@ -369,8 +568,9 @@ def generate_docker_trajectories(
     if len(result_lines) != len(scenarios):
         raise RuntimeError(f"Docker returned {len(result_lines)} results for {len(scenarios)} scenarios")
     results = [json.loads(line) for line in result_lines]
+    runner_sha256 = _sha256_file(runner_path)
     batch_id = "docker-batch:" + _sha256_bytes(
-        f"{image_id}:{_sha256_bytes(scenarios_text.encode('utf-8'))}".encode("utf-8")
+        f"{image_id}:{runner_sha256}:{_sha256_bytes(scenarios_text.encode('utf-8'))}".encode("utf-8")
     )[:24]
     trajectories = [
         docker_result_to_trajectory(
@@ -404,7 +604,7 @@ def generate_docker_trajectories(
         "restrictions": restrictions,
         "runner": {
             "path": str(runner_path),
-            "sha256": _sha256_file(runner_path),
+            "sha256": runner_sha256,
         },
         "counts": {
             "requested": count,

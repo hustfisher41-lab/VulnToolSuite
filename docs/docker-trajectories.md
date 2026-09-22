@@ -8,13 +8,13 @@
 
 ```powershell
 python -m vulntools --db output/vulnerability-master.sqlite trajectory-docker-generate `
-  --count 1500 `
+  --count 3000 `
   --seed vulntools-docker-lab-v1 `
   --image python:3.12 `
-  --output output/docker-trajectories
+  --output output/docker-trajectories-3000
 ```
 
-默认 1,500 条在十类场景间轮询分配，因此每类 150 条：
+默认 3,000 条在十类场景间轮询分配，因此每个子类型 300 条，技术漏洞与业务逻辑漏洞各 1,500 条：
 
 - 技术类：XSS、SQL 注入、命令注入、SSRF、CSRF。
 - 业务逻辑类：参数篡改、批量字段绑定、授权重放、重复提交、流程顺序绕过。
@@ -30,6 +30,21 @@ python -m vulntools --db output/vulnerability-master.sqlite trajectory-split-dat
 ```
 
 该命令仅导出 `environment_kind=docker_canary_lab` 的轨迹，生成通用技术漏洞库 `technical-vulnerabilities.sqlite` 和业务逻辑漏洞库 `business-logic-vulnerabilities.sqlite`。导出器会对每个库执行 SQLite 完整性、外键及类别隔离检查。默认不覆盖已有文件；重新生成时需使用 `--overwrite`。
+
+每个拆分库额外包含：
+
+- `structured_pentest_chains`：任务目标、方法、阻碍、七阶段步骤、恢复策略、完成判据和证据指针。
+- `dataset_metadata`：条款编号、最低数量、实际数量、成功数、完整数、类型和阻碍分布以及验收布尔值。
+
+七个固定阶段为：`define_scope`、`form_hypothesis`、`assess_obstacle`、`recover_or_proceed`、`execute_canary`、`verify_evidence`、`complete_task`。每个方法都覆盖无额外阻碍、会话过期、字段别名、输入过滤和状态版本过期五种条件。
+
+可执行独立验收：
+
+```powershell
+python scripts/validate_trajectory_databases.py `
+  --input output/docker-trajectory-databases-1500-each `
+  --expected-per-category 1500
+```
 
 ## 容器边界
 

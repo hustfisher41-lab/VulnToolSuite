@@ -21,6 +21,11 @@ EXPECTED_RESTRICTIONS = {
     "tmpfs_noexec=true",
     "pull=never",
 }
+EXPECTED_PHASES = [
+    "define_scope", "form_hypothesis", "assess_obstacle", "recover_or_proceed",
+    "execute_canary", "verify_evidence", "complete_task",
+]
+EXPECTED_OBSTACLES = {"none", "session_expired", "field_alias", "input_filter", "state_version"}
 
 
 def sha256_file(path: Path) -> str:
@@ -90,8 +95,21 @@ def validate(database: Path, directory: Path, expected_count: int) -> dict:
             and item.get("real_vulnerability_verified") is False
             and item.get("contains_internal_reasoning") is False
             and item.get("outcome_scope") == "docker_lab_canary_only"
+            and item.get("chain_complete") is True
+            and (item.get("structured_pentest_chain") or {}).get("complete") is True
+            and (item.get("completion") or {}).get("task_completed") is True
         ):
             raise ValueError(f"Trajectory boundary mismatch: {item.get('task_id')}")
+        if [step.get("action_type") for step in item.get("steps") or []] != EXPECTED_PHASES:
+            raise ValueError(f"Incomplete structured chain: {item.get('task_id')}")
+        obstacle = item.get("obstacle_condition") or {}
+        if (
+            obstacle.get("code") not in EXPECTED_OBSTACLES
+            or obstacle.get("recovery_verified") is not True
+            or not obstacle.get("assessment_zh")
+            or not obstacle.get("strategy_zh")
+        ):
+            raise ValueError(f"Incomplete obstacle process: {item.get('task_id')}")
         environment = item.get("environment") or {}
         if environment.get("authorized") is not True:
             raise ValueError(f"Unauthorized trajectory: {item.get('task_id')}")
@@ -102,6 +120,13 @@ def validate(database: Path, directory: Path, expected_count: int) -> dict:
 
     type_counts = dict(sorted(Counter(item["vulnerability_type"] for item in payloads).items()))
     category_counts = dict(sorted(Counter(item["category"] for item in payloads).items()))
+    obstacle_counts = dict(sorted(Counter(
+        item["obstacle_condition"]["code"] for item in payloads
+    ).items()))
+    method_obstacle_counts = Counter(
+        (item["vulnerability_type"], item["obstacle_condition"]["code"])
+        for item in payloads
+    )
     if type_counts != manifest.get("vulnerability_types"):
         raise ValueError("Vulnerability type distribution mismatch")
     expected_categories = {
@@ -110,6 +135,10 @@ def validate(database: Path, directory: Path, expected_count: int) -> dict:
     }
     if category_counts != expected_categories:
         raise ValueError("Category distribution mismatch")
+    if set(obstacle_counts) != EXPECTED_OBSTACLES or len(method_obstacle_counts) != 50:
+        raise ValueError("Method/obstacle coverage mismatch")
+    if any(count < 1 for count in method_obstacle_counts.values()):
+        raise ValueError("An expected method/obstacle pair is empty")
     evidence_digests = {
         item["evidence"][0]["evidence_digest"]
         for item in payloads
@@ -126,6 +155,9 @@ def validate(database: Path, directory: Path, expected_count: int) -> dict:
         "unique_evidence_digests": len(evidence_digests),
         "categories": category_counts,
         "vulnerability_types": type_counts,
+        "obstacles": obstacle_counts,
+        "method_obstacle_pairs": len(method_obstacle_counts),
+        "successful_complete_chains": len(payloads),
         "artifacts": checked_artifacts,
         "contains_internal_reasoning": False,
         "real_world_vulnerabilities_verified": 0,
@@ -136,7 +168,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--input", type=Path, required=True)
-    parser.add_argument("--expected-count", type=int, default=1500)
+    parser.add_argument("--expected-count", type=int, default=3000)
     args = parser.parse_args()
     report = validate(args.db, args.input, args.expected_count)
     print(json.dumps(report, ensure_ascii=False, indent=2))
