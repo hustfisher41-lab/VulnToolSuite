@@ -1,0 +1,13 @@
+{
+  "source_id": "AVD-DEMO-1001",
+  "url": "https://example.invalid/advisory/1001",
+  "aliases": ["CVE-2099-1001"],
+  "status": "active",
+  "fields": {
+    "title": "Synthetic archive traversal example",
+    "description": "虚构演示：压缩包解压路径未经校验。",
+    "weaknesses": ["CWE-22"],
+    "severity": "high"
+  },
+  "references": []
+}

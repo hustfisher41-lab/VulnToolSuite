@@ -1,0 +1,3 @@
+{"id":"archive-path-traversal","query":"archive destination path traversal","relevant":["CVE-2099-1001"]}
+{"id":"cross-site-scripting","query":"unescaped HTML cross site scripting","relevant":["CVE-2099-1002"]}
+{"id":"sql-injection","query":"untrusted SQL query parameter binding","relevant":["CVE-2099-1003"]}

@@ -1,0 +1,33 @@
+[Unit]
+Description=VulnToolSuite disposable VM sandbox agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vulntools-sandbox
+Group=vulntools-sandbox
+EnvironmentFile=/etc/vulntools/sandbox-agent.env
+ExecStart=/opt/vulntools/venv/bin/vulntools sandbox-agent --config /etc/vulntools/sandbox-agent.json --host 0.0.0.0 --port 9443 --ca-file /etc/vulntools/pki/clients-ca.pem --cert-file /etc/vulntools/pki/agent.pem --key-file /etc/vulntools/pki/agent-key.pem
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/vulntools-sandbox
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+UMask=0077
+MemoryMax=512M
+TasksMax=128
+KillMode=control-group
+TimeoutStopSec=20
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+
+[Install]
+WantedBy=multi-user.target

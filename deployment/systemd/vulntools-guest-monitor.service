@@ -1,0 +1,21 @@
+[Unit]
+Description=VulnToolSuite canary-only disposable guest monitor
+After=local-fs.target
+ConditionPathExists=/etc/vulntools-guest-canary
+ConditionKernelCommandLine=vulntools_guest=canary
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 -m vulntools sandbox-guest-monitor --port 4050
+Restart=no
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+KillMode=control-group
+TimeoutStopSec=5
+ProtectHome=yes
+PrivateTmp=yes
+# Monitor needs root to drop samples to UID/GID 10000; never installed on host.
+
+[Install]
+WantedBy=multi-user.target

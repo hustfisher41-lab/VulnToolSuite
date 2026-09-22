@@ -1,0 +1,3 @@
+{"run_id":"synthetic-demo","timestamp":"2099-01-01T00:00:00Z","type":"syscall","name":"openat","pid":10,"return_code":3}
+{"run_id":"synthetic-demo","timestamp":"2099-01-01T00:00:01Z","type":"syscall","name":"connect","pid":10,"return_code":-1}
+{"run_id":"synthetic-demo","timestamp":"2099-01-01T00:00:02Z","type":"policy_violation"}

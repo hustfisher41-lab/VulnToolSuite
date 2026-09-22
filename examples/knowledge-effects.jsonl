@@ -1,0 +1,12 @@
+{"variant":"baseline","task":"path-classification","metric":"macro_f1","direction":"maximize","seed":11,"dataset_version":"synthetic-v1","value":0.68}
+{"variant":"knowledge-injected","task":"path-classification","metric":"macro_f1","direction":"maximize","seed":11,"dataset_version":"synthetic-v1","value":0.75}
+{"variant":"baseline","task":"path-classification","metric":"macro_f1","direction":"maximize","seed":22,"dataset_version":"synthetic-v1","value":0.69}
+{"variant":"knowledge-injected","task":"path-classification","metric":"macro_f1","direction":"maximize","seed":22,"dataset_version":"synthetic-v1","value":0.74}
+{"variant":"baseline","task":"path-classification","metric":"macro_f1","direction":"maximize","seed":33,"dataset_version":"synthetic-v1","value":0.67}
+{"variant":"knowledge-injected","task":"path-classification","metric":"macro_f1","direction":"maximize","seed":33,"dataset_version":"synthetic-v1","value":0.76}
+{"variant":"baseline","task":"poc-matching","metric":"error_rate","direction":"minimize","seed":11,"dataset_version":"synthetic-v1","value":0.25}
+{"variant":"knowledge-injected","task":"poc-matching","metric":"error_rate","direction":"minimize","seed":11,"dataset_version":"synthetic-v1","value":0.19}
+{"variant":"baseline","task":"poc-matching","metric":"error_rate","direction":"minimize","seed":22,"dataset_version":"synthetic-v1","value":0.24}
+{"variant":"knowledge-injected","task":"poc-matching","metric":"error_rate","direction":"minimize","seed":22,"dataset_version":"synthetic-v1","value":0.18}
+{"variant":"baseline","task":"poc-matching","metric":"error_rate","direction":"minimize","seed":33,"dataset_version":"synthetic-v1","value":0.26}
+{"variant":"knowledge-injected","task":"poc-matching","metric":"error_rate","direction":"minimize","seed":33,"dataset_version":"synthetic-v1","value":0.20}

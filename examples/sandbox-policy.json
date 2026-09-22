@@ -1,0 +1,13 @@
+{
+  "isolation": "vm",
+  "network": "disabled",
+  "host_mounts": false,
+  "readonly_base": true,
+  "destroy_after_run": true,
+  "external_watchdog": true,
+  "syscall_monitor_required": true,
+  "timeout_seconds": 30,
+  "memory_mb": 512,
+  "cpu_count": 1,
+  "process_limit": 64
+}

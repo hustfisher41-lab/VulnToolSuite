@@ -1,0 +1,4 @@
+{"sample_id":"train-cve-1001-text","vuln_id":"CVE-2099-1001","family_id":"archive-path-traversal","split":"train","labels":["CWE-22","path-traversal"],"modalities":["text"],"weight":1.0}
+{"sample_id":"train-cve-1001-patch","vuln_id":"CVE-2099-1001","family_id":"archive-path-traversal","split":"train","labels":["CWE-22","path-traversal"],"modalities":["patch"],"weight":1.0}
+{"sample_id":"validation-cve-1002","vuln_id":"CVE-2099-1002","family_id":"web-output-encoding","split":"validation","labels":["CWE-79","xss"],"modalities":["text"],"weight":1.0}
+{"sample_id":"test-cve-1003","vuln_id":"CVE-2099-1003","family_id":"query-construction","split":"test","labels":["CWE-89","sql-injection"],"modalities":["text"],"weight":1.0}

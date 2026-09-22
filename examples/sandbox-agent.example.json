@@ -1,0 +1,20 @@
+{
+  "backend_id": "sandbox-linux-01",
+  "state_dir": "/var/lib/vulntools-sandbox",
+  "bearer_token_env": "VULNTOOLS_SANDBOX_TOKEN",
+  "attestation_key_env": "VULNTOOLS_ATTESTATION_KEY",
+  "acceptance_file": "/var/lib/vulntools-sandbox/acceptance.json",
+  "max_sample_bytes": 4194304,
+  "max_artifact_bytes": 16777216,
+  "retention_seconds": 86400,
+  "workers": 2,
+  "executor": {
+    "type": "supervisor",
+    "path": "/usr/local/libexec/vulntools-vm-supervisor",
+    "sha256": "REPLACE_WITH_64_HEX_SHA256",
+    "image_path": "/var/lib/vulntools-images/guest-rootfs.ext4",
+    "image_sha256": "REPLACE_WITH_64_HEX_SHA256",
+    "kernel_path": "/var/lib/vulntools-images/vmlinux",
+    "kernel_sha256": "REPLACE_WITH_64_HEX_SHA256"
+  }
+}

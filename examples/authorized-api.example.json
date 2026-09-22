@@ -1,0 +1,27 @@
+{
+  "schema": "vulntools/authorized-api/v1",
+  "source": "avd",
+  "endpoint_template": "https://licensed.example.invalid/api/v1/vulnerabilities/{id}",
+  "response_format": "mapped-json/v1",
+  "record_pointer": "/data",
+  "auth": {
+    "token_env": "AVD_AUTHORIZED_API_TOKEN",
+    "header": "Authorization",
+    "scheme": "Bearer"
+  },
+  "mapping": {
+    "source_id": "/id",
+    "url": "/permalink",
+    "aliases": "/aliases",
+    "references": "/references",
+    "status": "/status",
+    "source_updated_at": "/updated_at",
+    "fields": {
+      "title": "/title",
+      "description": "/description",
+      "components": "/affected",
+      "weaknesses": "/weaknesses",
+      "severity": "/severity"
+    }
+  }
+}

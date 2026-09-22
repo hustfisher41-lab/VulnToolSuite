@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+*.egg-info/
+.venv/
+.env
+output/
+data/
+models/
+*.sqlite*
+build/
+dist/
+models/*/.cache/
+models/*/model.safetensors
