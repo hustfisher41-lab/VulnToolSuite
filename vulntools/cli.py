@@ -29,7 +29,9 @@ from .search import evaluate as evaluate_search
 from .search import index_status, record_similarity, search
 from .storage import Store
 from .training import build_training_dataset
-from .trajectories import export_trajectories, import_trajectories, trajectory_from_smoke
+from .trajectories import (
+    export_category_databases, export_trajectories, import_trajectories, trajectory_from_smoke,
+)
 from .vision import LocalVisionEncoder, encode_image_artifact
 
 
@@ -257,6 +259,13 @@ def parser() -> argparse.ArgumentParser:
     trajectory_docker.add_argument("--seed", default="vulntools-docker-lab-v1")
     trajectory_docker.add_argument("--image", default="python:3.12", help="Existing local image; automatic pulls are disabled")
     trajectory_docker.add_argument("--timeout", type=int, default=300)
+    trajectory_split = commands.add_parser(
+        "trajectory-split-databases",
+        help="Export Docker trajectories into separate technical and business-logic SQLite databases",
+    )
+    trajectory_split.add_argument("--output", default="output/docker-trajectory-databases")
+    trajectory_split.add_argument("--expected-per-category", type=int)
+    trajectory_split.add_argument("--overwrite", action="store_true")
     commands.add_parser("trajectory-status", help="Show real/simulated trajectory and runtime-event counts")
     closure = commands.add_parser(
         "simple-closure", help="Run the usable local data/search/dataset/fixture-trajectory acceptance loop")
@@ -506,6 +515,13 @@ def main(argv: list[str] | None = None) -> int:
                         seed=args.seed,
                         image=args.image,
                         timeout=args.timeout,
+                    )
+                elif args.command == "trajectory-split-databases":
+                    report = export_category_databases(
+                        store,
+                        args.output,
+                        expected_per_category=args.expected_per_category,
+                        overwrite=args.overwrite,
                     )
                 elif args.command == "trajectory-status":
                     report = store.trajectory_summary()

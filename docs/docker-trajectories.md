@@ -21,6 +21,16 @@ python -m vulntools --db output/vulnerability-master.sqlite trajectory-docker-ge
 
 每条场景都有唯一 canary、变体、可选阻碍和主机预先计算的完成摘要。容器返回的场景哈希、证据摘要和身份必须全部匹配，且 canary 验证必须成功，否则整批拒绝导入。确定性的 `task_id` 使相同 seed 重跑时更新原记录，不会重复累加。
 
+## 按大类拆分数据库
+
+```powershell
+python -m vulntools --db output/vulnerability-master.sqlite trajectory-split-databases `
+  --output output/docker-trajectory-databases-1500-each `
+  --expected-per-category 1500
+```
+
+该命令仅导出 `environment_kind=docker_canary_lab` 的轨迹，生成通用技术漏洞库 `technical-vulnerabilities.sqlite` 和业务逻辑漏洞库 `business-logic-vulnerabilities.sqlite`。导出器会对每个库执行 SQLite 完整性、外键及类别隔离检查。默认不覆盖已有文件；重新生成时需使用 `--overwrite`。
+
 ## 容器边界
 
 运行参数固定包含：

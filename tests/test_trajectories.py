@@ -9,7 +9,9 @@ from vulntools.embedding import HashEncoder, index_records
 from vulntools.processing import process
 from vulntools.reproduction import smoke_workflow
 from vulntools.storage import Store
-from vulntools.trajectories import export_trajectories, trajectory_from_smoke, validate_trajectory
+from vulntools.trajectories import (
+    export_category_databases, export_trajectories, trajectory_from_smoke, validate_trajectory,
+)
 
 
 def test_fixture_workflow_persists_with_honest_execution_boundary(tmp_path):
@@ -82,3 +84,33 @@ def test_one_command_simple_closure_is_usable_and_honest(tmp_path):
     assert report["production_boundaries"]["full_production_closure"] is False
     assert report["production_boundaries"]["docker_or_vm_execution"] is False
     assert (tmp_path / "closure" / "closure-report.json").is_file()
+
+
+def test_category_database_export_is_isolated_and_validated(tmp_path):
+    database = tmp_path / "source.sqlite"
+    with Store(database) as store:
+        for category in ("technical_vulnerability", "business_logic"):
+            trajectory = trajectory_from_smoke(smoke_workflow(tmp_path / category, mode="fixture"))
+            trajectory["task_id"] = f"docker-lab:{category}:0000"
+            trajectory["category"] = category
+            trajectory["environment"]["kind"] = "docker_canary_lab"
+            trajectory["is_simulated"] = False
+            trajectory["execution_ready"] = True
+            store.save_trajectory(validate_trajectory(trajectory))
+        report = export_category_databases(
+            store, tmp_path / "split", expected_per_category=1
+        )
+        replaced = export_category_databases(
+            store, tmp_path / "split", expected_per_category=1, overwrite=True
+        )
+
+    assert report["counts"] == {
+        "technical_vulnerability": 1,
+        "business_logic": 1,
+    }
+    for category, details in report["databases"].items():
+        assert details["quick_check"] == "ok"
+        assert details["foreign_key_violations"] == 0
+        with Store(details["path"]) as split_store:
+            assert split_store.trajectory_summary()["categories"] == {category: 1}
+    assert replaced["counts"] == report["counts"]

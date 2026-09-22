@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sqlite3
 from typing import Any
 
 from .models import canonical_json, now
@@ -205,3 +206,115 @@ def export_trajectories(store: Store, output: str | Path) -> dict[str, Any]:
                 )}
     (directory / "manifest.json").write_text(canonical_json(manifest) + "\n", encoding="utf-8")
     return {**manifest, "output": str(directory)}
+
+
+def export_category_databases(
+    store: Store,
+    output: str | Path,
+    *,
+    expected_per_category: int | None = None,
+    environment_kind: str = "docker_canary_lab",
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Export Docker trajectories into one self-contained SQLite database per category."""
+    if expected_per_category is not None and (
+        type(expected_per_category) is not int or expected_per_category < 1
+    ):
+        raise ValueError("expected_per_category must be a positive integer")
+    if not isinstance(environment_kind, str) or not environment_kind.strip():
+        raise ValueError("environment_kind must be nonempty")
+
+    directory = Path(output).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    names = {
+        "technical_vulnerability": "technical-vulnerabilities.sqlite",
+        "business_logic": "business-logic-vulnerabilities.sqlite",
+    }
+    rows = store.db.execute(
+        """SELECT category,payload FROM security_trajectories
+           WHERE environment_kind=? ORDER BY category,task_id""",
+        (environment_kind,),
+    ).fetchall()
+    grouped = {category: [] for category in names}
+    for row in rows:
+        category = str(row[0])
+        if category in grouped:
+            grouped[category].append(validate_trajectory(json.loads(row[1])))
+
+    counts = {category: len(items) for category, items in grouped.items()}
+    if expected_per_category is not None and any(
+        count != expected_per_category for count in counts.values()
+    ):
+        raise ValueError(
+            f"Expected {expected_per_category} {environment_kind} trajectories per category; got {counts}"
+        )
+
+    targets = {category: directory / filename for category, filename in names.items()}
+    existing = [str(path) for path in targets.values() if path.exists()]
+    if existing and not overwrite:
+        raise FileExistsError("Refusing to overwrite existing databases: " + ", ".join(existing))
+
+    database_reports: dict[str, Any] = {}
+    for category, target in targets.items():
+        temporary = target.with_suffix(target.suffix + ".building")
+        if temporary.exists():
+            temporary.unlink()
+        try:
+            with Store(temporary) as category_store:
+                for trajectory in grouped[category]:
+                    category_store.save_trajectory(trajectory)
+                summary = category_store.trajectory_summary()
+                quick_check = str(category_store.db.execute("PRAGMA quick_check").fetchone()[0])
+                foreign_key_violations = len(category_store.db.execute("PRAGMA foreign_key_check").fetchall())
+            if quick_check != "ok" or foreign_key_violations:
+                raise RuntimeError(
+                    f"SQLite validation failed for {category}: quick_check={quick_check}, "
+                    f"foreign_key_violations={foreign_key_violations}"
+                )
+            # Path.replace uses the platform's atomic replacement primitive, so an
+            # existing valid database is not removed before the new one is complete.
+            temporary.replace(target)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+
+        digest = hashlib.sha256()
+        with target.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        connection = sqlite3.connect(target)
+        try:
+            persisted_categories = {
+                str(row[0]): int(row[1])
+                for row in connection.execute(
+                    "SELECT category,count(*) FROM security_trajectories GROUP BY category"
+                )
+            }
+        finally:
+            connection.close()
+        if persisted_categories != {category: counts[category]}:
+            raise RuntimeError(f"Category isolation failed for {target}: {persisted_categories}")
+        database_reports[category] = {
+            "path": str(target),
+            "filename": target.name,
+            "bytes": target.stat().st_size,
+            "sha256": digest.hexdigest(),
+            "quick_check": quick_check,
+            "foreign_key_violations": foreign_key_violations,
+            "summary": summary,
+        }
+
+    manifest = {
+        "schema": "vulntools/security-trajectory-category-databases/v1",
+        "created_at": now(),
+        "environment_kind": environment_kind,
+        "expected_per_category": expected_per_category,
+        "counts": counts,
+        "databases": database_reports,
+        "contains_internal_reasoning": False,
+        "real_world_vulnerabilities_verified": 0,
+        "scope": "Executed Docker canaries in synthetic authorized scenarios only.",
+    }
+    manifest_path = directory / "manifest.json"
+    manifest_path.write_text(canonical_json(manifest) + "\n", encoding="utf-8")
+    return {**manifest, "manifest": str(manifest_path)}
