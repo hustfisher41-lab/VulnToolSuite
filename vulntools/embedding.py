@@ -447,6 +447,30 @@ def index_records(
         if previous and json.loads(previous[0]) != manifest:
             raise ValueError("Index model contract mismatch")
         store.db.execute("INSERT OR IGNORE INTO vector_models VALUES (?,?)", (model_id, canonical_json(manifest)))
+        # Ask SQLite for only stale/missing records.  Canonical payloads can be
+        # large because they retain source evidence, so deserializing every
+        # payload made a 387-record incremental update scan several gigabytes.
+        # A valid aggregate vector is the completion marker; view rows are also
+        # reconsidered if their revision is stale or all views are absent.
+        skipped = int(store.db.execute(
+            """SELECT count(*) FROM canonical c JOIN vectors v
+               ON v.vuln_id=c.vuln_id AND v.revision=c.revision
+              WHERE v.model_id=?""", (model_id,)
+        ).fetchone()[0])
+        candidate_rows = list(store.db.execute(
+            """SELECT c.payload FROM canonical c
+               LEFT JOIN vectors v ON v.vuln_id=c.vuln_id AND v.model_id=?
+              WHERE v.vuln_id IS NULL OR v.revision<>c.revision
+                 OR NOT EXISTS (
+                     SELECT 1 FROM vector_views vv
+                      WHERE vv.model_id=? AND vv.vuln_id=c.vuln_id)
+                 OR EXISTS (
+                     SELECT 1 FROM vector_views vv
+                      WHERE vv.model_id=? AND vv.vuln_id=c.vuln_id
+                        AND vv.revision<>c.revision)
+              ORDER BY c.vuln_id""",
+            (model_id, model_id, model_id),
+        ))
         pending: list[tuple[dict[str, Any], dict[str, str]]] = []
         pending_texts = 0
 
@@ -479,21 +503,13 @@ def index_records(
             pending = []
             pending_texts = 0
 
-        for record in store.iter_records():
+        for row in candidate_rows:
+            record = json.loads(row[0])
             if record["status"] != "active":
-                store.db.execute("DELETE FROM vectors WHERE vuln_id=?", (record["vuln_id"],))
-                store.db.execute("DELETE FROM vector_views WHERE vuln_id=?", (record["vuln_id"],))
+                store.db.execute("DELETE FROM vectors WHERE model_id=? AND vuln_id=?", (model_id, record["vuln_id"]))
+                store.db.execute("DELETE FROM vector_views WHERE model_id=? AND vuln_id=?", (model_id, record["vuln_id"]))
                 continue
             views = view_texts(record)
-            previous = store.db.execute("SELECT revision FROM vectors WHERE model_id=? AND vuln_id=?", (model_id, record["vuln_id"])).fetchone()
-            existing_views = {row[0]: row[1] for row in store.db.execute(
-                "SELECT view_name,revision FROM vector_views WHERE model_id=? AND vuln_id=?",
-                (model_id, record["vuln_id"]),
-            )}
-            if (previous and previous[0] == record["revision"] and set(existing_views) == set(views)
-                    and all(revision == record["revision"] for revision in existing_views.values())):
-                skipped += 1
-                continue
             if max_records is not None and changed + len(pending) >= max_records:
                 break
             pending.append((record, views))

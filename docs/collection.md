@@ -61,6 +61,26 @@ python -m vulntools --db output/local.sqlite collection-status
 
 本地导入支持单个JSON、JSON数组、JSONL、AVD/CNNVD HTML详情页，以及CVE JSON目录。来源更新后运行：
 
+公开详情页被验证机制阻断时，可以从仍可直接访问的官方目录页或官方报告构造带证据的交换文件：
+
+```powershell
+python scripts/build_public_catalog_exchange.py `
+  --avd-page "https://avd.aliyun.com/product?prod=php7.4&page=1" `
+  --output output/source-imports/avd-public-catalog.jsonl
+
+python scripts/build_public_catalog_exchange.py `
+  --cnnvd-pdf tmp/pdfs/cnnvd-report.pdf `
+  --cnnvd-url "https://www.cnnvd.org.cn/path/to/report.pdf" `
+  --output output/source-imports/cnnvd-public-report.jsonl
+
+python -m vulntools --db output/local.sqlite import --source avd `
+  --input output/source-imports/avd-public-catalog.jsonl
+python -m vulntools --db output/local.sqlite import --source cnnvd `
+  --input output/source-imports/cnnvd-public-report.jsonl
+```
+
+该脚本仅接受官方 HTTPS 主机，记录页面/报告 SHA-256、页码和原始证据片段。目录行不等同于漏洞详情页，因此不会虚构描述、利用代码或修复信息；遇到 WAF 仍会失败，不会尝试绕过。
+
 ```powershell
 python -m vulntools --db output/local.sqlite process
 python -m vulntools --db output/local.sqlite index
